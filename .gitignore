@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor/tooling
+.vscode/
+.idea/
+.claude/
+
+# Build output (none currently, kept for when/if a bundler is added)
+dist/
+build/
