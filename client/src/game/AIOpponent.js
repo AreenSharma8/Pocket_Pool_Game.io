@@ -108,11 +108,16 @@ export class AIOpponent {
 
         const potted = new Set();
         let firstContactSuit = null;
+        let railContacted = false;
 
         // Same "what did the cue ball hit first" tracking PoolMatch.js does
         // for real shots, needed so the foul-checking Rules clone below sees
-        // an accurate first-contact suit.
+        // an accurate first-contact suit. Also tracks cushion contact, so the
+        // "legal shot" rule (pot or rail touch required after contact) scores
+        // a bare do-nothing tap as the foul it actually is, rather than the
+        // AI thinking it's a safe, harmless shot.
         world.world.addEventListener("beginContact", (evt) => {
+            if (world.isCushion(evt.bodyA) || world.isCushion(evt.bodyB)) railContacted = true;
             if (firstContactSuit !== null) return;
             const idA = this._idForBody(bodies, evt.bodyA);
             const idB = this._idForBody(bodies, evt.bodyB);
@@ -159,6 +164,7 @@ export class AIOpponent {
         const ruleClone = this._cloneRules(rules, currentPlayerId);
         ruleClone.onShotStart();
         if (firstContactSuit !== null) ruleClone.onFirstContact(firstContactSuit);
+        if (railContacted) ruleClone.onRailContact();
         potted.forEach((id) => ruleClone.onBallPotted(suitById.get(id)));
         const outcome = ruleClone.resolveTurn(ballList);
 
@@ -209,6 +215,11 @@ export class AIOpponent {
         clone.turnIndex = rules.playerIds.indexOf(currentPlayerId);
         clone.suits = new Map(rules.suits);
         clone.scores = new Map(rules.scores);
+        // A fresh Rules always starts with breakPending true -- override it so
+        // the clone only treats this as "the break" if the real match is
+        // actually still on its first shot (otherwise every simulated shot
+        // would wrongly look 8-ball-safe).
+        clone.breakPending = rules.breakPending;
         return clone;
     }
 }

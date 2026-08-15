@@ -22,6 +22,9 @@ export class Rules {
         this.turnIndex = 0;
         this.gameOver = false;
         this.winnerId = null;
+        // True only for the very first shot of the match -- potting the
+        // black ball on the break is a special case (re-spot, not a win/loss).
+        this.breakPending = true;
         this._resetTurnState();
     }
 
@@ -32,6 +35,8 @@ export class Rules {
         this.pottedThisTurn = [];
         this.cueBallPotted = false;
         this.blackPotted = false;
+        this.railContacted = false;
+        this.ballEscaped = false;
     }
 
     // Convenience getter: whoever's turn it currently is.
@@ -64,6 +69,21 @@ export class Rules {
         }
     }
 
+    // Call when a ball (cue or any object ball) touches a cushion this turn.
+    // Legal-shot rule: after the initial legal contact, *something* must
+    // happen -- a pot, or a cushion touch -- or the shot is a foul (a bare
+    // tap that goes nowhere isn't a genuine shot).
+    onRailContact() {
+        this.railContacted = true;
+    }
+
+    // Call when an object ball leaves the playing surface without going
+    // through a pocket. That's a foul, not a legal pot -- PoolMatch re-spots
+    // the ball rather than counting it toward the player's group.
+    onBallEscaped() {
+        this.ballEscaped = true;
+    }
+
     // How many balls of a given suit are still on the table (not yet potted) --
     // used to check "have I cleared my whole suit yet?" for the 8-ball win condition.
     remainingSuitBallsCount(suit, ballList) {
@@ -81,10 +101,17 @@ export class Rules {
         const mySuit = this.suits.get(player);
         let foul = false;
 
+        // Only the very first shot of the match counts as "the break" --
+        // consume the flag immediately so no later shot is mistaken for it.
+        const isBreak = this.breakPending;
+        this.breakPending = false;
+
         // No first contact at all (totally missed everything) is always a foul.
         if (this.firstContactSuit === null) foul = true;
         // Scratching (potting the cue ball) is always a foul.
         if (this.cueBallPotted) foul = true;
+        // An object ball flying off the table is a foul, not a legal pot.
+        if (this.ballEscaped) foul = true;
 
         // Suits mode: hitting the opponent's suit first (once suits are
         // assigned) is a foul, unless it's legal to hit the black (see below).
@@ -98,30 +125,46 @@ export class Rules {
             if (suitLeft > 0) foul = true;
         }
 
+        // Legal-shot rule: contact alone isn't enough -- after the initial
+        // legal hit, something must actually happen (a ball potted, or a
+        // cushion touched by anything), or it's a foul. This is what makes a
+        // bare "tap and stop" shot illegal rather than a free pass.
+        const anyPotted = this.pottedThisTurn.length > 0 || this.blackPotted;
+        if (this.firstContactSuit !== null && !anyPotted && !this.railContacted) {
+            foul = true;
+        }
+
         let won = false;
         let loserForfeits = false;
+        let blackRespot = false;
 
-        // Potting the black ball always ends the game -- either a win (your
-        // suit was already clear and you didn't foul) or an instant loss
-        // (potted it early, or committed a foul on the same shot).
         if (this.blackPotted) {
-            if (this.mode === "suits") {
-                const suitLeft = mySuit ? this.remainingSuitBallsCount(mySuit, ballList) : 1;
-                if (!mySuit || suitLeft > 0 || foul) {
-                    loserForfeits = true; // potted 8-ball early or on a foul -> loss
-                } else {
-                    won = true;
-                }
+            if (isBreak) {
+                // Potting the 8-ball on the break doesn't end the game --
+                // it gets re-spotted and play continues normally.
+                blackRespot = true;
             } else {
-                const anyLeft = ballList.some((b) => !b.potted && b.suit !== SUIT.BLACK && b.suit !== SUIT.WHITE);
-                if (anyLeft || foul) {
-                    loserForfeits = true;
+                // Potting the black ball always ends the game -- either a win
+                // (your suit was already clear and you didn't foul) or an
+                // instant loss (potted it early, or fouled on the same shot).
+                if (this.mode === "suits") {
+                    const suitLeft = mySuit ? this.remainingSuitBallsCount(mySuit, ballList) : 1;
+                    if (!mySuit || suitLeft > 0 || foul) {
+                        loserForfeits = true; // potted 8-ball early or on a foul -> loss
+                    } else {
+                        won = true;
+                    }
                 } else {
-                    won = true;
+                    const anyLeft = ballList.some((b) => !b.potted && b.suit !== SUIT.BLACK && b.suit !== SUIT.WHITE);
+                    if (anyLeft || foul) {
+                        loserForfeits = true;
+                    } else {
+                        won = true;
+                    }
                 }
+                this.gameOver = true;
+                this.winnerId = loserForfeits ? this._otherPlayer(player) : player;
             }
-            this.gameOver = true;
-            this.winnerId = loserForfeits ? this._otherPlayer(player) : player;
         }
 
         // Suit assignment on first legal pot (2-player classic mode only).
@@ -161,7 +204,7 @@ export class Rules {
             this.turnIndex = (this.turnIndex + 1) % this.playerIds.length;
         }
 
-        return { foul, won: this.gameOver, keepTurn, ballInHand: foul };
+        return { foul, won: this.gameOver, keepTurn, ballInHand: foul, blackRespot };
     }
 
     // In 2-player mode this is trivially "the other one". In 3-4 player

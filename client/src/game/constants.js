@@ -53,3 +53,7 @@ export const MOVING_THRESHOLD = 0.03; // m/s below which a ball is considered st
 // of 15 balls -- apex sits closer to the cue ball, matching a real break setup.
 export const DEFAULT_CUE_BALL_POS = { x: -TABLE_LENGTH * 0.28, z: 0 };
 export const RACK_APEX = { x: TABLE_LENGTH * 0.22, z: 0 };
+
+// Standard "center spot" used to re-spot the black ball -- e.g. when it's
+// potted on the break, which doesn't end the game (see Rules.js).
+export const BLACK_RESPOT = { x: 0, z: 0 };

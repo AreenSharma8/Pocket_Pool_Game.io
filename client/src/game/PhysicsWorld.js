@@ -45,6 +45,7 @@ export class PhysicsWorld {
         }));
 
         this.balls = new Map(); // id -> CANNON.Body
+        this.cushionBodies = new Set(); // tracked so contact events can tell "hit a rail" from "hit the slate"
         this._buildSlate();
         this._buildCushions();
     }
@@ -68,7 +69,14 @@ export class PhysicsWorld {
         body.addShape(new CANNON.Box(new CANNON.Vec3(halfExtents.x, halfExtents.y, halfExtents.z)));
         body.position.set(position.x, TABLE_SURFACE_Y + CUSHION_HEIGHT / 2, position.z);
         this.world.addBody(body);
+        this.cushionBodies.add(body);
         return body;
+    }
+
+    // Whether a given physics body is one of the rail segments -- used to
+    // detect "a ball hit a cushion" for the legal-shot rule (see Rules.js).
+    isCushion(body) {
+        return this.cushionBodies.has(body);
     }
 
     _buildCushions() {

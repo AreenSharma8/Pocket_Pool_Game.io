@@ -6,7 +6,7 @@ import { Rules } from "./Rules.js";
 import { AIOpponent } from "./AIOpponent.js";
 import {
     SUIT, BALL_RADIUS, DEFAULT_CUE_BALL_POS, RACK_APEX, TABLE_SURFACE_Y,
-    HALF_L, HALF_W, CUE_MAX_IMPULSE
+    HALF_L, HALF_W, CUE_MAX_IMPULSE, BLACK_RESPOT
 } from "./constants.js";
 
 const AUDIO_BASE = "assets/sounds/";
@@ -147,10 +147,16 @@ export class PoolMatch {
     }
 
     // Listens for physics collisions to (a) record which suit the cue ball hit
-    // first this turn, for foul checking, and (b) play the click sound whenever
-    // two balls touch.
+    // first this turn, for foul checking, (b) play the click sound whenever
+    // two balls touch, and (c) tell the rules engine whenever any ball
+    // touches a cushion, which satisfies the "legal shot" requirement that
+    // something happen after the initial contact (a pot, or a rail touch).
     _bindContactEvents() {
         this.physics.world.addEventListener("beginContact", (evt) => {
+            if (this.physics.isCushion(evt.bodyA) || this.physics.isCushion(evt.bodyB)) {
+                this.rules.onRailContact();
+            }
+
             const idA = this.bodyToId.get(evt.bodyA);
             const idB = this.bodyToId.get(evt.bodyB);
             if (!idA || !idB) return;
@@ -329,19 +335,56 @@ export class PoolMatch {
             b.lastX = pos.x;
             b.lastZ = pos.z;
 
-            if (pocket || escaped) {
+            if (pocket) {
                 b.potted = true;
                 this.rules.onBallPotted(b.suit);
                 this.scene.setBallVisible(id, false);
-                if (pocket && this.sounds.hole) {
+                if (this.sounds.hole) {
                     const h = this.sounds.hole.cloneNode(true);
                     h.volume = 0.6;
                     h.play().catch(() => {});
                 }
                 if (id !== "white") this.physics.removeBall(id);
                 else this.physics.resetBall(b.body, -10, -10);
+            } else if (escaped) {
+                if (id === "white") {
+                    // Scratch -- already a foul via cueBallPotted below regardless
+                    // of pocket vs. escape, so this stays parked off-table until
+                    // the fouled player places it back via ball-in-hand.
+                    b.potted = true;
+                    this.rules.onBallPotted(b.suit);
+                    this.scene.setBallVisible(id, false);
+                    this.physics.resetBall(b.body, -10, -10);
+                } else {
+                    // An object ball left the table without going through a
+                    // pocket -- a foul, not a legal pot. It's never removed:
+                    // just re-spotted right where it left, and stays in play.
+                    this.rules.onBallEscaped();
+                    this.physics.resetBall(b.body, prevX, prevZ);
+                    b.lastX = prevX;
+                    b.lastZ = prevZ;
+                }
             }
         }
+    }
+
+    // Un-pots a ball: re-creates its physics body (a potted ball's old body
+    // was fully removed from the world, so it can't just be repositioned)
+    // and makes its mesh visible again. Used both when the black ball is
+    // re-spotted after being potted on the break, and when a multiplayer
+    // client has to revive a ball its own local physics wrongly potted (see
+    // _applyAuthoritativeResult below).
+    _reviveBall(id, x, z) {
+        const b = this.balls.get(id);
+        if (!b) return;
+        const newBody = this.physics.createBall(id, x, z);
+        this.bodyToId.delete(b.body);
+        b.body = newBody;
+        this.bodyToId.set(newBody, id);
+        b.potted = false;
+        b.lastX = x;
+        b.lastZ = z;
+        this.scene.setBallVisible(id, true);
     }
 
     // Called once a shot's balls have all stopped moving. Runs the rules
@@ -357,6 +400,12 @@ export class PoolMatch {
         const ballList = [...this.balls.entries()].map(([id, b]) => ({ id, suit: b.suit, potted: b.potted && id !== "white" }));
         const outcome = this.rules.resolveTurn(ballList);
 
+        // 8-ball potted on the break doesn't end the game -- revive it before
+        // building the network payload so guests see it back in play too.
+        if (outcome.blackRespot) {
+            this._reviveBall("black", BLACK_RESPOT.x, BLACK_RESPOT.z);
+        }
+
         if (this.mode === "multi" && this.network && this.network.sendTurnResult) {
             this.network.sendTurnResult(this._buildResultPayload(outcome));
         }
@@ -371,6 +420,8 @@ export class PoolMatch {
             this.onFoulToast("Foul! Ball in hand.");
             this.awaitingPlacement = true;
             this.cueControls.setEnabled(false);
+        } else if (outcome.blackRespot) {
+            this.onFoulToast("8-ball on the break — re-spotted, play continues.");
         }
 
         this._announceTurn();
@@ -429,14 +480,9 @@ export class PoolMatch {
                 this.physics.removeBall(id);
             } else if (!shouldBePotted && b.potted) {
                 // This client thought the ball was potted but the host says
-                // it's still in play -- re-create its physics body (the old
-                // one was fully removed from the world) and show it again.
-                const newBody = this.physics.createBall(id, 0, 0);
-                this.bodyToId.delete(b.body);
-                b.body = newBody;
-                this.bodyToId.set(newBody, id);
-                b.potted = false;
-                this.scene.setBallVisible(id, true);
+                // it's still in play -- revive it (exact position gets set by
+                // the positions loop below).
+                this._reviveBall(id, 0, 0);
             }
         }
 
