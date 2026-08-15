@@ -75,21 +75,27 @@ export class CueControls {
         this.activePointers = new Map(); // pointerId -> last known clientX, for multi-touch orbit detection
 
         this.canvas.addEventListener("pointerdown", (e) => {
+            e.preventDefault(); // belt-and-suspenders alongside touch-action: none in CSS
             this.activePointers.set(e.pointerId, e.clientX);
-            this.canvas.setPointerCapture(e.pointerId);
             this.dragging = (e.button === 2 || this.activePointers.size >= 2) ? "orbit" : "aim";
             this.lastX = e.clientX;
+            // Pointer capture can throw on some browser/touch combinations (e.g. if
+            // the pointer isn't considered "active" yet) -- that must never abort
+            // the mode-detection logic above, or a failed capture silently breaks
+            // aiming/orbiting for the rest of the gesture.
+            try { this.canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         });
 
         window.addEventListener("pointermove", (e) => {
             if (!this.dragging) return;
+            e.preventDefault();
             if (this.activePointers.has(e.pointerId)) this.activePointers.set(e.pointerId, e.clientX);
             const dx = e.clientX - this.lastX;
             this.lastX = e.clientX;
             const delta = dx * 0.006;
             if (this.dragging === "aim") this.aimAngle -= delta;
             else this.cameraOrbit -= delta;
-        });
+        }, { passive: false });
 
         window.addEventListener("pointerup", (e) => {
             this.activePointers.delete(e.pointerId);

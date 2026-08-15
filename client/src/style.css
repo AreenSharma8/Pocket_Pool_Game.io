@@ -29,6 +29,11 @@ html, body {
     width: 100%;
     height: 100%;
     display: block;
+    /* Without this, touch drags on the canvas get hijacked by the browser's
+       native scroll/pan/pinch-zoom gestures instead of reaching our pointer
+       event handlers -- this is what breaks aim-drag and two-finger orbit
+       on phones/tablets. */
+    touch-action: none;
 }
 
 #ui-root {
